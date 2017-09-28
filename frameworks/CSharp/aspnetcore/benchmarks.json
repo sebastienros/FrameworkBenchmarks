@@ -10,7 +10,7 @@
         "Source": {
             "Repository": "https://github.com/sebastienros/FrameworkBenchmarks.git",
             "BranchOrCommit": "benchmarks",
-            "Project": "frameworks/CSharp/aspnet/src/Benchmarks.csproj"
+            "Project": "frameworks/CSharp/aspnetcore/Benchmarks/Benchmarks.csproj"
         },
 
         "Connections": 256,
