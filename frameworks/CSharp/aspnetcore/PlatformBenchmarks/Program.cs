@@ -62,7 +62,7 @@ namespace PlatformBenchmarks
             }
 #endif
 
-            var host = new WebHostBuilder()
+            var hostBuilder = new WebHostBuilder()
                 .UseBenchmarksConfiguration(config)
                 .UseKestrel((context, options) =>
                 {
@@ -73,8 +73,20 @@ namespace PlatformBenchmarks
                         builder.UseHttpApplication<BenchmarkApplication>();
                     });
                 })
-                .UseStartup<Startup>()
-                .Build();
+                .UseStartup<Startup>();
+
+            hostBuilder.UseSockets(options =>
+            {
+                options.WaitForDataBeforeAllocatingBuffer = false;
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    options.UnsafePreferInlineScheduling = Environment.GetEnvironmentVariable("DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS") == "1";
+                }
+            });
+
+
+            var host = hostBuilder.Build();
 
             return host;
         }
