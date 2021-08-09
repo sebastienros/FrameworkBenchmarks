@@ -93,7 +93,6 @@ scenarios:
         presetHeaders: json
         path: /db
         serverPort: 8080
-        connections: 256
   
   multiple_queries:
     db:
@@ -108,6 +107,7 @@ scenarios:
       variables:
         presetHeaders: json
         path: /queries/20
+        serverPort: 8080
 
   updates:
     db:
