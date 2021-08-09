@@ -2,6 +2,8 @@ imports:
   - https://raw.githubusercontent.com/dotnet/crank/main/src/Microsoft.Crank.Jobs.Wrk/wrk.yml
   - https://github.com/aspnet/Benchmarks/blob/main/scenarios/aspnet.profiles.yml?raw=true
 
+  # todo: set the optimal number of client connections for each scenario
+
 jobs:
   aspnet:
     source:
@@ -48,7 +50,7 @@ scenarios:
 
   json:
     application:
-      job: actix
+      job: aspnet
       source:
           dockerFile: frameworks/CSharp/aspnetcore/aspcore.dockerfile
           dockerImageName: aspcore
