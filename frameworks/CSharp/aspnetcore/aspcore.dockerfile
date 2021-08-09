@@ -10,7 +10,7 @@ ENV DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS 1
 # Full PGO
 ENV COMPlus_TieredPGO 1 
 ENV COMPlus_TC_QuickJitForLoops 1 
-ENV COMPlus_ReadyToRun=0
+ENV COMPlus_ReadyToRun 0
 
 WORKDIR /app
 COPY --from=build /app/out ./
