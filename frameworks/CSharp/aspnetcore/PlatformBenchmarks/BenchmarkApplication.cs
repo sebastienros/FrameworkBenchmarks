@@ -65,17 +65,10 @@ namespace PlatformBenchmarks
         private RequestType _requestType;
         private int _queries;
 
-#if NET5_0
         public void OnStartLine(HttpVersionAndMethod versionAndMethod, TargetOffsetPathLength targetPath, Span<byte> startLine)
         {
             _requestType = versionAndMethod.Method == HttpMethod.Get ? GetRequestType(startLine.Slice(targetPath.Offset, targetPath.Length), ref _queries) : RequestType.NotRecognized;
         }
-#else
-        public void OnStartLine(HttpMethod method, HttpVersion version, Span<byte> target, Span<byte> path, Span<byte> query, Span<byte> customMethod, bool pathEncoded)
-        {
-            _requestType = method == HttpMethod.Get ? GetRequestType(path, ref _queries) : RequestType.NotRecognized;
-        }
-#endif
 
         private RequestType GetRequestType(ReadOnlySpan<byte> path, ref int queries)
         {
