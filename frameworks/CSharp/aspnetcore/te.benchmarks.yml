@@ -8,7 +8,7 @@ jobs:
   aspnet:
     source:
       repository: https://github.com/sebastienros/FrameworkBenchmarks.git # todo: change back to TechEmpower
-      branchOrCommit: sebros/net60 # todo: change back to master
+      branchOrCommit: sebros/net50 # todo: change back to master
       dockerContextDirectory: frameworks/CSharp/aspnetcore/
     readyStateText: Application started.
 
