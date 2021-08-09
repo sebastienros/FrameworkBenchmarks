@@ -78,7 +78,66 @@ scenarios:
         path: /fortunes
         serverPort: 8080
         connections: 512
-        
+
+  single_query:
+    db:
+      job: postgresql
+    application:
+      job: aspnet
+      source:
+          dockerFile: frameworks/CSharp/aspnetcore/aspcore-ado-pg.dockerfile
+          dockerImageName: aspcore-ado-pg
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /db
+        serverPort: 8080
+        connections: 256
+  
+  multiple_queries:
+    db:
+      job: postgresql
+    application:
+      job: aspnet
+      source:
+          dockerFile: frameworks/CSharp/aspnetcore/aspcore-ado-pg.dockerfile
+          dockerImageName: aspcore-ado-pg
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /queries/20
+
+  updates:
+    db:
+      job: postgresql
+    application:
+      job: aspnet
+      source:
+          dockerFile: frameworks/CSharp/aspnetcore/aspcore-ado-pg-up.dockerfile
+          dockerImageName: aspcore-ado-pg-up
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /updates/20
+        serverPort: 8080
+
+  caching:
+    db:
+      job: postgresql
+    application:
+      job: aspnet
+      source:
+          dockerFile: frameworks/CSharp/aspnetcore/aspcore-ado-pg.dockerfile
+          dockerImageName: aspcore-ado-pg
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /cached-worlds/100
+
   fortunes_mysql:
     db:
       job: mysql
