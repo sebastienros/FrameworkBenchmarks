@@ -7,9 +7,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS runtime
 ENV ASPNETCORE_URLS http://+:8080
 
 # Full PGO
-ENV COMPlus_TieredPGO 1 
-ENV COMPlus_TC_QuickJitForLoops 1 
-ENV COMPlus_ReadyToRun 0
+ENV DOTNET_TieredPGO 1 
+ENV DOTNET_TC_QuickJitForLoops 1 
+ENV DOTNET_ReadyToRun 0
 
 WORKDIR /app
 COPY --from=build /app/out ./
