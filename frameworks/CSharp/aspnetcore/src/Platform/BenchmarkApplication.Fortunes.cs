@@ -1,7 +1,6 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
-#if !AOT
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -15,12 +14,14 @@ public partial class BenchmarkApplication
     {
         await OutputFortunes(
             pipeWriter,
-            await RawDb.LoadFortunesRows(),
-            FortunesTemplateFactory);
+            await RawDb.LoadFortunesRows()
+            );
     }
 
-    private ValueTask OutputFortunes<TModel>(PipeWriter pipeWriter, TModel model, SliceFactory<TModel> templateFactory)
+    private ValueTask OutputFortunes<TModel>(PipeWriter pipeWriter, TModel model)
     {
+        var template = Platform.Slices.FortunesUtf8.Create<TModel>(model);
+
         // Render headers
         var preamble = """
             HTTP/1.1 200 OK
@@ -34,8 +35,6 @@ public partial class BenchmarkApplication
         DateHeader.HeaderBytes.CopyTo(headersSpan[preamble.Length..]);
         pipeWriter.Advance(headersLength);
 
-        // Render body
-        var template = templateFactory(model);
         // Kestrel PipeWriter span size is 4K, headers above already written to first span & template output is ~1350 bytes,
         // so 2K chunk size should result in only a single span and chunk being used.
         var chunkedWriter = GetChunkedWriter(pipeWriter, chunkSizeHint: 2048);
@@ -65,4 +64,3 @@ public partial class BenchmarkApplication
         template.Dispose();
     }
 }
-#endif

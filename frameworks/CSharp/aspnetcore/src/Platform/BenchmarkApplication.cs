@@ -1,18 +1,14 @@
 ﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http;
+using Microsoft.Extensions.ObjectPool;
 using System;
 using System.Buffers.Text;
-using System.Collections.Generic;
 using System.IO.Pipelines;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http;
-using Microsoft.Extensions.ObjectPool;
-#if !AOT
-using RazorSlices;
-#endif
 
 namespace PlatformBenchmarks
 {
@@ -55,14 +51,6 @@ namespace PlatformBenchmarks
                 return true;
             }
         }
-
-#if !AOT
-#if NPGSQL
-        private readonly static SliceFactory<List<FortuneUtf8>> FortunesTemplateFactory = RazorSlice.ResolveSliceFactory<List<FortuneUtf8>>("/Templates/FortunesUtf8.cshtml");
-#else
-        private readonly static SliceFactory<List<FortuneUtf16>> FortunesTemplateFactory = RazorSlice.ResolveSliceFactory<List<FortuneUtf16>>("/Templates/FortunesUtf16.cshtml");
-#endif
-#endif
 
         [ThreadStatic]
         private static Utf8JsonWriter t_writer;
