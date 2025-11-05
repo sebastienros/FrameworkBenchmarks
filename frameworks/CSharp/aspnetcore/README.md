@@ -8,3 +8,7 @@ See [.NET Core](http://dot.net) and [ASP.NET Core](https://github.com/dotnet/asp
 
 * C# 13.0
 
+**Platform**
+
+* .NET 10.0
+
