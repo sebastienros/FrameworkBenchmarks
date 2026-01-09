@@ -1,0 +1,109 @@
+imports:
+  - https://raw.githubusercontent.com/dotnet/crank/main/src/Microsoft.Crank.Jobs.Wrk/wrk.yml
+  - https://raw.githubusercontent.com/dotnet/crank/main/src/Microsoft.Crank.Jobs.Bombardier/bombardier.yml
+  - https://github.com/aspnet/Benchmarks/blob/main/scenarios/aspnet.profiles.yml?raw=true
+
+jobs:
+
+  aspnetcore:
+    source:
+      repository: https://github.com/sebastienros/FrameworkBenchmarks.git
+      branchOrCommit: sebros/net10
+      dockerFile: frameworks/CSharp/aspnetcore/aspnetcore.dockerfile
+      dockerImageName: aspnetcore
+      dockerContextDirectory: frameworks/CSharp/aspnetcore/
+    readyStateText: Application started
+    arguments: --add-host="tfb-database:{{databaseServer}}"
+    noClean: true
+
+  pgclient:
+    source:
+      repository: https://github.com/sebastienros/FrameworkBenchmarks.git
+      branchOrCommit: sebros/pgclient
+      dockerFile: frameworks/CSharp/aspnetcore/aspnetcore-pgclient.dockerfile
+      dockerImageName: pgclient
+      dockerContextDirectory: frameworks/CSharp/aspnetcore/
+    readyStateText: Application started
+    arguments: --add-host="tfb-database:{{databaseServer}}"
+    noClean: true
+
+  postgresql:
+    source:
+      repository: https://github.com/TechEmpower/FrameworkBenchmarks.git
+      branchOrCommit: master
+      dockerFile: toolset/databases/postgres/postgres.dockerfile
+      dockerImageName: postgres_te
+      dockerContextDirectory: toolset/databases/postgres
+    readyStateText: ready to accept connections
+    noClean: true
+    
+scenarios:
+
+# ASP.NET Core (Platform)
+  plaintext_aspnetcore:
+    application:
+      job: aspnetcore
+    load:
+      job: wrk
+      variables:
+        presetHeaders: plaintext
+        path: /plaintext
+        pipeline: 16
+        serverPort: 8080
+
+  json_aspnetcore:
+    application:
+      job: aspnetcore
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /json
+        serverPort: 8080
+
+  fortunes_aspnetcore:
+    db:
+      job: postgresql
+    application:
+      job: aspnetcore
+    load:
+      job: wrk
+      variables:
+        presetHeaders: html
+        path: /fortunes
+        serverPort: 8080
+
+
+# ASP.NET Core (PgClient)
+  plaintext_pgclient:
+    application:
+      job: pgclient
+    load:
+      job: wrk
+      variables:
+        presetHeaders: plaintext
+        path: /plaintext
+        pipeline: 16
+        serverPort: 8080
+
+  json_pgclient:
+    application:
+      job: pgclient
+    load:
+      job: wrk
+      variables:
+        presetHeaders: json
+        path: /json
+        serverPort: 8080
+
+  fortunes_pgclient:
+    db:
+      job: postgresql
+    application:
+      job: pgclient
+    load:
+      job: wrk
+      variables:
+        presetHeaders: html
+        path: /fortunes
+        serverPort: 8080

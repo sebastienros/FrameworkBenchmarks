@@ -55,7 +55,7 @@ namespace PlatformBenchmarks
             }
         }
 
-#if NPGSQL
+#if PGCLIENT || NPGSQL
         private readonly static Func<List<FortuneUtf8>, RazorSlice<List<FortuneUtf8>>> FortunesTemplateFactory = FortunesUtf8.Create;
 #else
         private readonly static Func<List<FortuneUtf16>, RazorSlice<List<FortuneUtf16>>> FortunesTemplateFactory = FortunesUtf16.Create;
