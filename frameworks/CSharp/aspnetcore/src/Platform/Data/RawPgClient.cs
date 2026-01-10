@@ -23,17 +23,24 @@ public sealed class RawDb
 
     public RawDb(AppSettings appSettings)
     {
-        var connectOptions = PgConnectOptions.FromUri(appSettings.ConnectionString)
-            .SetCachePreparedStatements(true);
-        
-        var poolOptions = new PgPoolOptions
+        // Parse connection options from URI - cache_prepared_statements can be set there
+        // Default to caching prepared statements if not specified in connection string
+        var connectOptions = PgConnectOptions.FromUri(appSettings.ConnectionString);
+        if (!appSettings.ConnectionString.Contains("cache_prepared_statements", StringComparison.OrdinalIgnoreCase))
         {
-            MaxSize = 64,
-            Pipelined = true,
-        };
+            connectOptions.CachePreparedStatements = true;
+        }
+        
+        // Parse pool options from connection string, with defaults
+        var poolOptions = PgPoolOptions.FromUri(appSettings.ConnectionString);
 
         _pool = PgPool.Create(connectOptions, poolOptions);
     }
+
+    /// <summary>
+    /// Gets the pool for telemetry access.
+    /// </summary>
+    public PgPool Pool => _pool;
 
     public async Task<World> LoadSingleQueryRow()
     {
@@ -98,13 +105,24 @@ public sealed class RawDb
         var cacheKeys = _cacheKeys;
         var cache = _cache;
         
-        for (var i = 1; i < 10001; i++)
+        Console.WriteLine("Starting cache population with single query...");
+        var totalCount = 10000;
+        
+        // Execute a single query to get all records at once
+        var rows = await _pool.QueryAsync("SELECT id, randomnumber FROM world ORDER BY id");
+        
+        var count = 0;
+        foreach (var row in rows)
         {
-            var result = await _pool.PreparedQueryAsync(
-                "SELECT id, randomnumber FROM world WHERE id = $1",
-                PgTuple.Create(i));
-            var row = result[0];
-            cache.Set<CachedWorld>(cacheKeys[i], new CachedWorld { Id = row.GetValue(0).GetInteger(), RandomNumber = row.GetValue(1).GetInteger() });
+            var id = row.GetValue(0).GetInteger();
+            var randomNumber = row.GetValue(1).GetInteger();
+            cache.Set<CachedWorld>(cacheKeys[id], new CachedWorld { Id = id, RandomNumber = randomNumber });
+            count++;
+            
+            if (count % 1000 == 0)
+            {
+                Console.WriteLine($"Cached {count}/{totalCount} records");
+            }
         }
 
         Console.WriteLine("Caching Populated");

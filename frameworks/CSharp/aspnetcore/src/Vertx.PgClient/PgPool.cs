@@ -25,6 +25,26 @@ public sealed class PgPool : IAsyncDisposable
     private readonly CancellationTokenSource _disposeCts = new();
     private bool _disposed;
 
+    // Telemetry counters
+    private long _totalQueriesExecuted;
+    private long _connectionsCreated;
+    private long _connectionsDisposed;
+
+    /// <summary>
+    /// Gets the total number of queries executed.
+    /// </summary>
+    public long TotalQueriesExecuted => Interlocked.Read(ref _totalQueriesExecuted);
+
+    /// <summary>
+    /// Gets the total number of connections created.
+    /// </summary>
+    public long ConnectionsCreated => Interlocked.Read(ref _connectionsCreated);
+
+    /// <summary>
+    /// Gets the total number of connections disposed.
+    /// </summary>
+    public long ConnectionsDisposed => Interlocked.Read(ref _connectionsDisposed);
+
     /// <summary>
     /// Gets the current number of connections in the pool (regular + multiplexed).
     /// </summary>
@@ -38,6 +58,22 @@ public sealed class PgPool : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Gets telemetry information about multiplexed connections.
+    /// </summary>
+    public IEnumerable<(int InflightCount, int PipeliningLimit, int AvailableSlots)> GetMultiplexedConnectionStats()
+    {
+        foreach (var conn in _multiplexedConnections)
+        {
+            yield return (conn.InflightCount, conn.PipeliningLimit, conn.AvailableSlots);
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of multiplexed connections.
+    /// </summary>
+    public int MultiplexedConnectionCount => _multiplexedConnections.Count;
 
     /// <summary>
     /// Gets the number of available connection slots.
@@ -83,6 +119,8 @@ public sealed class PgPool : IAsyncDisposable
     /// </summary>
     public async Task<RowSet> QueryAsync(string sql, CancellationToken cancellationToken = default)
     {
+        Interlocked.Increment(ref _totalQueriesExecuted);
+        
         if (_poolOptions.Pipelined)
         {
             var connection = await AcquireMultiplexedAsync(cancellationToken);
@@ -107,6 +145,8 @@ public sealed class PgPool : IAsyncDisposable
     /// </summary>
     public async Task<RowSet> PreparedQueryAsync(string sql, Tuple? parameters = null, CancellationToken cancellationToken = default)
     {
+        Interlocked.Increment(ref _totalQueriesExecuted);
+        
         if (_poolOptions.Pipelined)
         {
             var connection = await AcquireMultiplexedAsync(cancellationToken);
@@ -292,6 +332,7 @@ public sealed class PgPool : IAsyncDisposable
                     if (_multiplexedConnections.Count < _poolOptions.MaxSize)
                     {
                         var connection = await MultiplexedConnection.CreateAsync(_connectOptions, _logger, linkedToken);
+                        Interlocked.Increment(ref _connectionsCreated);
                         
                         connection.AvailableWorker = () =>
                         {

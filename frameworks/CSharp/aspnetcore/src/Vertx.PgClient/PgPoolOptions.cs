@@ -100,6 +100,126 @@ public sealed class PgPoolOptions
         Pipelined = other.Pipelined;
     }
 
+    /// <summary>
+    /// Creates a PgPoolOptions from a connection URI string.
+    /// Supported parameters:
+    /// - pool_size or poolsize: Maximum pool size
+    /// - pool_name or poolname: Pool name for identification
+    /// - pipelined: Whether to use pipelined mode (true/false)
+    /// - idle_timeout or idletimeout: Idle timeout in milliseconds
+    /// - connection_timeout or connectiontimeout: Connection timeout in milliseconds
+    /// - max_lifetime or maxlifetime: Maximum connection lifetime in milliseconds
+    /// - max_wait_queue_size or maxwaitqueuesize: Maximum wait queue size
+    /// </summary>
+    public static PgPoolOptions FromUri(string connectionUri)
+    {
+        var options = new PgPoolOptions();
+        
+        // Find the query string part
+        int queryIndex = connectionUri.IndexOf('?');
+        if (queryIndex < 0)
+        {
+            return options;
+        }
+        
+        string queryString = connectionUri[(queryIndex + 1)..];
+        ParseParameters(queryString, options);
+        
+        return options;
+    }
+
+    private static void ParseParameters(string parametersInfo, PgPoolOptions options)
+    {
+        if (string.IsNullOrEmpty(parametersInfo))
+        {
+            return;
+        }
+
+        ReadOnlySpan<char> span = parametersInfo.AsSpan();
+        
+        foreach (var range in span.Split('&'))
+        {
+            var parameterPair = span[range];
+            
+            if (parameterPair.IsEmpty)
+            {
+                continue;
+            }
+
+            int indexOfDelimiter = parameterPair.IndexOf('=');
+            if (indexOfDelimiter < 0)
+            {
+                continue; // Skip malformed parameters
+            }
+            
+            var key = parameterPair[..indexOfDelimiter].ToString().ToLowerInvariant();
+            var value = Uri.UnescapeDataString(parameterPair[(indexOfDelimiter + 1)..].Trim().ToString());
+
+            switch (key)
+            {
+                case "pool_size":
+                case "poolsize":
+                    if (int.TryParse(value, out var poolSize) && poolSize >= 1)
+                    {
+                        options.MaxSize = poolSize;
+                    }
+                    break;
+                    
+                case "pool_name":
+                case "poolname":
+                    options.Name = value;
+                    break;
+                    
+                case "pipelined":
+                    if (bool.TryParse(value, out var pipelined))
+                    {
+                        options.Pipelined = pipelined;
+                    }
+                    else if (value == "1" || value.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                    {
+                        options.Pipelined = true;
+                    }
+                    else if (value == "0" || value.Equals("no", StringComparison.OrdinalIgnoreCase))
+                    {
+                        options.Pipelined = false;
+                    }
+                    break;
+                    
+                case "idle_timeout":
+                case "idletimeout":
+                    if (int.TryParse(value, out var idleTimeout) && idleTimeout >= 0)
+                    {
+                        options.IdleTimeout = idleTimeout;
+                    }
+                    break;
+                    
+                case "connection_timeout":
+                case "connectiontimeout":
+                    if (int.TryParse(value, out var connectionTimeout) && connectionTimeout >= 0)
+                    {
+                        options.ConnectionTimeout = connectionTimeout;
+                    }
+                    break;
+                    
+                case "max_lifetime":
+                case "maxlifetime":
+                    if (int.TryParse(value, out var maxLifetime) && maxLifetime >= 0)
+                    {
+                        options.MaxLifetime = maxLifetime;
+                    }
+                    break;
+                    
+                case "max_wait_queue_size":
+                case "maxwaitqueuesize":
+                    if (int.TryParse(value, out var maxWaitQueueSize) && maxWaitQueueSize >= 0)
+                    {
+                        options.MaxWaitQueueSize = maxWaitQueueSize;
+                    }
+                    break;
+            }
+        }
+    }
+
     public PgPoolOptions SetMaxSize(int maxSize) { MaxSize = maxSize; return this; }
     public PgPoolOptions SetMaxWaitQueueSize(int size) { MaxWaitQueueSize = size; return this; }
     public PgPoolOptions SetIdleTimeout(int timeout) { IdleTimeout = timeout; return this; }

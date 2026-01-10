@@ -191,6 +191,51 @@ internal static partial class PgConnectionUriParser
                 case "sslmode":
                     options.SslMode = SslModeExtensions.Parse(value);
                     break;
+                case "pipelining_limit":
+                case "pipelininglimit":
+                    if (int.TryParse(value, out var pipeliningLimit) && pipeliningLimit >= 1)
+                    {
+                        options.PipeliningLimit = pipeliningLimit;
+                    }
+                    break;
+                case "cache_prepared_statements":
+                case "cachepreparedstatements":
+                    if (bool.TryParse(value, out var cachePrepared))
+                    {
+                        options.CachePreparedStatements = cachePrepared;
+                    }
+                    else if (value == "1" || value.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                    {
+                        options.CachePreparedStatements = true;
+                    }
+                    else if (value == "0" || value.Equals("no", StringComparison.OrdinalIgnoreCase))
+                    {
+                        options.CachePreparedStatements = false;
+                    }
+                    break;
+                case "prepared_statement_cache_max_size":
+                case "preparedstatementcachemaxsize":
+                    if (int.TryParse(value, out var cacheMaxSize) && cacheMaxSize >= 1)
+                    {
+                        options.PreparedStatementCacheMaxSize = cacheMaxSize;
+                    }
+                    break;
+                // Pool-related parameters - ignore here (handled by PgPoolOptions.FromUri)
+                case "pool_size":
+                case "poolsize":
+                case "pool_name":
+                case "poolname":
+                case "pipelined":
+                case "idle_timeout":
+                case "idletimeout":
+                case "connection_timeout":
+                case "connectiontimeout":
+                case "max_lifetime":
+                case "maxlifetime":
+                case "max_wait_queue_size":
+                case "maxwaitqueuesize":
+                    // Skip - these are handled by PgPoolOptions
+                    break;
                 default:
                     options.Properties[key] = value;
                     break;

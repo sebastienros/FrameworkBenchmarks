@@ -1,6 +1,7 @@
 // Copyright (C) 2017 Julien Viet
 // Licensed under the Apache License, Version 2.0
 
+using System.Collections.Concurrent;
 using Vertx.PgClient.Codec;
 
 namespace Vertx.PgClient;
@@ -22,39 +23,59 @@ internal sealed class PreparedStatementCache
 {
     private readonly int _maxSize;
     private readonly int _sqlLimit;
-    private readonly Dictionary<string, LinkedListNode<CacheEntry>> _cache;
+    private readonly ConcurrentDictionary<string, CacheEntry> _cache;
     private readonly LinkedList<CacheEntry> _lruList;
-    private readonly Queue<byte[]> _statementsToClose;
+    private readonly ConcurrentQueue<byte[]> _statementsToClose;
+    private readonly object _lruLock = new object(); // Only for LRU list updates
 
     private sealed class CacheEntry
     {
         public required string Sql { get; init; }
         public required CachedPreparedStatement Statement { get; init; }
+        public LinkedListNode<CacheEntry>? Node { get; set; }
     }
 
     public PreparedStatementCache(int maxSize, int sqlLimit)
     {
         _maxSize = maxSize;
         _sqlLimit = sqlLimit;
-        _cache = new Dictionary<string, LinkedListNode<CacheEntry>>(maxSize);
+        _cache = new ConcurrentDictionary<string, CacheEntry>();
         _lruList = new LinkedList<CacheEntry>();
-        _statementsToClose = new Queue<byte[]>();
+        _statementsToClose = new ConcurrentQueue<byte[]>();
     }
 
     /// <summary>
     /// Tries to get a cached prepared statement.
+    /// Lock-free fast path for cache hits.
     /// </summary>
     /// <param name="sql">The SQL query.</param>
     /// <param name="statement">The cached statement if found.</param>
     /// <returns>True if the statement was found in the cache.</returns>
     public bool TryGet(string sql, out CachedPreparedStatement? statement)
     {
-        if (_cache.TryGetValue(sql, out var node))
+        // Lock-free read from ConcurrentDictionary
+        if (_cache.TryGetValue(sql, out var entry))
         {
-            // Move to front (most recently used)
-            _lruList.Remove(node);
-            _lruList.AddFirst(node);
-            statement = node.Value.Statement;
+            statement = entry.Statement;
+            
+            // Optionally update LRU - we can skip this for better performance
+            // since slightly stale LRU ordering is acceptable
+            // Uncomment below if strict LRU is needed:
+            /*
+            if (entry.Node != null)
+            {
+                lock (_lruLock)
+                {
+                    // Move to front (most recently used)
+                    if (entry.Node.List != null) // Check if still in list
+                    {
+                        _lruList.Remove(entry.Node);
+                        _lruList.AddFirst(entry.Node);
+                    }
+                }
+            }
+            */
+            
             return true;
         }
 
@@ -75,27 +96,38 @@ internal sealed class PreparedStatementCache
             return;
         }
 
-        // Don't add duplicates
-        if (_cache.ContainsKey(sql))
+        // Create entry
+        var entry = new CacheEntry { Sql = sql, Statement = statement };
+        
+        // Try to add to dictionary first (lock-free)
+        if (!_cache.TryAdd(sql, entry))
         {
+            // Already exists, don't add duplicate
             return;
         }
 
-        // Evict oldest if at capacity
-        while (_cache.Count >= _maxSize && _lruList.Last is not null)
+        // Now update LRU tracking under lock
+        lock (_lruLock)
         {
-            var oldest = _lruList.Last;
-            _cache.Remove(oldest.Value.Sql);
-            _lruList.RemoveLast();
-            // Queue the statement for closing
-            _statementsToClose.Enqueue(oldest.Value.Statement.StatementName);
-        }
+            // Evict oldest if at capacity
+            while (_cache.Count > _maxSize && _lruList.Last is not null)
+            {
+                var oldest = _lruList.Last;
+                _lruList.RemoveLast();
+                
+                // Remove from dictionary
+                if (_cache.TryRemove(oldest.Value.Sql, out var removed))
+                {
+                    removed.Node = null; // Detach node
+                    // Queue the statement for closing
+                    _statementsToClose.Enqueue(removed.Statement.StatementName);
+                }
+            }
 
-        // Add new entry at front
-        var entry = new CacheEntry { Sql = sql, Statement = statement };
-        var node = new LinkedListNode<CacheEntry>(entry);
-        _lruList.AddFirst(node);
-        _cache[sql] = node;
+            // Add new entry at front
+            var node = _lruList.AddFirst(entry);
+            entry.Node = node;
+        }
     }
 
     /// <summary>
@@ -109,12 +141,12 @@ internal sealed class PreparedStatementCache
     /// <returns>Statements to close, or empty if none.</returns>
     public IReadOnlyList<byte[]> GetStatementsToClose()
     {
-        if (_statementsToClose.Count == 0)
+        if (_statementsToClose.IsEmpty)
         {
             return Array.Empty<byte[]>();
         }
 
-        var result = new List<byte[]>(_statementsToClose.Count);
+        var result = new List<byte[]>();
         while (_statementsToClose.TryDequeue(out var name))
         {
             result.Add(name);
@@ -127,16 +159,26 @@ internal sealed class PreparedStatementCache
     /// </summary>
     public void Clear()
     {
-        foreach (var node in _lruList)
+        lock (_lruLock)
         {
-            _statementsToClose.Enqueue(node.Statement.StatementName);
+            foreach (var node in _lruList)
+            {
+                _statementsToClose.Enqueue(node.Statement.StatementName);
+            }
+            
+            _lruList.Clear();
+        }
+        
+        // Clear dictionary outside lock
+        foreach (var entry in _cache.Values)
+        {
+            entry.Node = null;
         }
         _cache.Clear();
-        _lruList.Clear();
     }
 
     /// <summary>
     /// Gets the current number of cached statements.
     /// </summary>
-    public int Count => _cache.Count;
+    public int Count => _cache.Count; // ConcurrentDictionary.Count is thread-safe
 }

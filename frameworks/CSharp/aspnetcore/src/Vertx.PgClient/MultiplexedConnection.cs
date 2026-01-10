@@ -22,6 +22,7 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly Channel<PgCommand> _commandChannel;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly SemaphoreSlim _hasInflight = new(0); // Signal when commands are enqueued
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _commandSenderTask;
     private readonly Task _responseDispatcherTask;
@@ -61,10 +62,9 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
         _logger = logger ?? NullLogger.Instance;
         _preparedStatementCache = cache;
         
-        // Bounded channel to provide backpressure
-        _commandChannel = Channel.CreateBounded<PgCommand>(new BoundedChannelOptions(PipeliningLimit * 2)
+        // Unbounded channel for maximum throughput - backpressure handled by pipelining limit
+        _commandChannel = Channel.CreateUnbounded<PgCommand>(new UnboundedChannelOptions
         {
-            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false
         });
@@ -134,10 +134,10 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
     /// Schedules a command for execution by writing it to the command channel.
     /// The background command sender task will pick it up and send it to the server.
     /// </summary>
-    private async ValueTask ScheduleCommandAsync(PgCommand command, CancellationToken cancellationToken)
+    private ValueTask ScheduleCommandAsync(PgCommand command, CancellationToken cancellationToken)
     {
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
-        await _commandChannel.Writer.WriteAsync(command, linkedCts.Token);
+        // Write to unbounded channel - this should never block
+        return _commandChannel.Writer.WriteAsync(command, cancellationToken);
     }
 
     /// <summary>
@@ -172,6 +172,7 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
                 try
                 {
                     // Add all commands to inflight queue first
+                    int addedCount;
                     lock (_inflight)
                     {
                         foreach (var command in batch)
@@ -179,7 +180,11 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
                             _inflight.Enqueue(command);
                             InflightCount++;
                         }
+                        addedCount = batch.Count;
                     }
+                    
+                    // Signal the response dispatcher that there are commands to process
+                    _hasInflight.Release(addedCount);
 
                     // Send all commands in a single batch (with lock to serialize writes)
                     await _sendLock.WaitAsync(_disposeCts.Token);
@@ -246,20 +251,17 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
         {
             while (!_disposed && !_disposeCts.Token.IsCancellationRequested)
             {
-                // Wait for a command to be in flight before trying to read responses
+                // Get the current command to process
                 PgCommand? current;
                 lock (_inflight)
                 {
-                    if (!_inflight.TryPeek(out current))
-                    {
-                        current = null;
-                    }
+                    _inflight.TryPeek(out current);
                 }
-
+                
                 if (current is null)
                 {
-                    // No commands yet, wait a bit
-                    await Task.Delay(10, _disposeCts.Token);
+                    // No commands yet - wait for signal that commands are available
+                    await _hasInflight.WaitAsync(_disposeCts.Token);
                     continue;
                 }
 

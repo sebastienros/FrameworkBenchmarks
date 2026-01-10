@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -14,6 +15,7 @@ namespace PlatformBenchmarks;
 public class Program
 {
     public static string[] Args;
+    private static CancellationTokenSource _telemetryCts;
 
     public static async Task Main(string[] args)
     {
@@ -40,7 +42,58 @@ public class Program
             Console.WriteLine($"Error trying to populate database cache: {ex}");
         }
 
+        // Start telemetry background task
+        _telemetryCts = new CancellationTokenSource();
+        _ = Task.Run(() => PrintTelemetryAsync(_telemetryCts.Token));
+
         await host.RunAsync();
+        
+        _telemetryCts.Cancel();
+    }
+
+    private static async Task PrintTelemetryAsync(CancellationToken cancellationToken)
+    {
+        var lastQueryCount = 0L;
+        var lastTime = DateTime.UtcNow;
+        
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(5000, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            
+            var pool = BenchmarkApplication.RawDb?.Pool;
+            if (pool == null) continue;
+            
+            var currentQueryCount = pool.TotalQueriesExecuted;
+            var currentTime = DateTime.UtcNow;
+            var elapsed = (currentTime - lastTime).TotalSeconds;
+            var queriesPerSec = elapsed > 0 ? (currentQueryCount - lastQueryCount) / elapsed : 0;
+            
+            var sb = new StringBuilder();
+            sb.AppendLine();
+            sb.AppendLine("=== Pool Telemetry ===");
+            sb.AppendLine($"Pool Size: {pool.Size}/{pool.Options.MaxSize}");
+            sb.AppendLine($"Connections Created: {pool.ConnectionsCreated}");
+            sb.AppendLine($"Total Queries: {currentQueryCount:N0}");
+            sb.AppendLine($"Queries/sec: {queriesPerSec:N0}");
+            
+            var connCount = pool.MultiplexedConnectionCount;
+            if (connCount > 0)
+            {
+                sb.AppendLine($"Multiplexed Connections: {connCount}");
+                int i = 0;
+                foreach (var (inflight, limit, available) in pool.GetMultiplexedConnectionStats())
+                {
+                    sb.AppendLine($"  Conn[{i}]: Inflight={inflight}/{limit}, Available={available}");
+                    i++;
+                }
+            }
+            sb.AppendLine("======================");
+            
+            Console.Write(sb.ToString());
+            
+            lastQueryCount = currentQueryCount;
+            lastTime = currentTime;
+        }
     }
 
     public static IHost BuildWebHost(string[] args)
