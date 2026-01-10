@@ -87,7 +87,7 @@ internal sealed class MultiplexedConnection : IAsyncDisposable
         
         // Create cache if enabled in options
         PreparedStatementCache? cache = null;
-        if (options.PreparedStatementCacheMaxSize > 0)
+        if (options.CachePreparedStatements && options.PreparedStatementCacheMaxSize > 0)
         {
             cache = new PreparedStatementCache(options.PreparedStatementCacheMaxSize, options.PreparedStatementCacheSqlLimit);
         }
