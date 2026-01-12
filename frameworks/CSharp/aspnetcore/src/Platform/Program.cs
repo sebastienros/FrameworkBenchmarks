@@ -43,19 +43,19 @@ public class Program
         }
 
         // Start telemetry background task
+    #if PGCLIENT
         _telemetryCts = new CancellationTokenSource();
         _ = Task.Run(() => PrintTelemetryAsync(_telemetryCts.Token));
+    #endif
 
         await host.RunAsync();
         
-        _telemetryCts.Cancel();
+        _telemetryCts?.Cancel();
     }
 
+#if PGCLIENT
     private static async Task PrintTelemetryAsync(CancellationToken cancellationToken)
     {
-        var lastQueryCount = 0L;
-        var lastTime = DateTime.UtcNow;
-        
         while (!cancellationToken.IsCancellationRequested)
         {
             await Task.Delay(5000, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -63,18 +63,10 @@ public class Program
             var pool = BenchmarkApplication.RawDb?.Pool;
             if (pool == null) continue;
             
-            var currentQueryCount = pool.TotalQueriesExecuted;
-            var currentTime = DateTime.UtcNow;
-            var elapsed = (currentTime - lastTime).TotalSeconds;
-            var queriesPerSec = elapsed > 0 ? (currentQueryCount - lastQueryCount) / elapsed : 0;
-            
             var sb = new StringBuilder();
             sb.AppendLine();
             sb.AppendLine("=== Pool Telemetry ===");
             sb.AppendLine($"Pool Size: {pool.Size}/{pool.Options.MaxSize}");
-            sb.AppendLine($"Connections Created: {pool.ConnectionsCreated}");
-            sb.AppendLine($"Total Queries: {currentQueryCount:N0}");
-            sb.AppendLine($"Queries/sec: {queriesPerSec:N0}");
             
             var connCount = pool.MultiplexedConnectionCount;
             if (connCount > 0)
@@ -90,11 +82,9 @@ public class Program
             sb.AppendLine("======================");
             
             Console.Write(sb.ToString());
-            
-            lastQueryCount = currentQueryCount;
-            lastTime = currentTime;
         }
     }
+#endif
 
     public static IHost BuildWebHost(string[] args)
     {

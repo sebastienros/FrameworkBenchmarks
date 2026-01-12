@@ -1,7 +1,10 @@
 // Copyright (C) 2017 Julien Viet
 // Licensed under the Apache License, Version 2.0
 
+using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -14,6 +17,10 @@ namespace Vertx.PgClient;
 /// </summary>
 public sealed class PgPool : IAsyncDisposable
 {
+    private static long s_poolIdCounter;
+
+    private readonly long _poolId;
+
     private readonly PgConnectOptions _connectOptions;
     private readonly PgPoolOptions _poolOptions;
     private readonly ILogger _logger;
@@ -25,25 +32,31 @@ public sealed class PgPool : IAsyncDisposable
     private readonly CancellationTokenSource _disposeCts = new();
     private bool _disposed;
 
-    // Telemetry counters
-    private long _totalQueriesExecuted;
-    private long _connectionsCreated;
-    private long _connectionsDisposed;
+    // Observable gauges (per-pool instance)
+    private readonly ObservableGauge<int> _poolSizeGauge;
+    private readonly ObservableGauge<int> _poolAvailableGauge;
+    private readonly ObservableGauge<int> _poolMultiplexedGauge;
 
-    /// <summary>
-    /// Gets the total number of queries executed.
-    /// </summary>
-    public long TotalQueriesExecuted => Interlocked.Read(ref _totalQueriesExecuted);
+    private static ActivityEvent CreateExceptionEvent(Exception ex)
+    {
+        var tags = new ActivityTagsCollection
+        {
+            ["exception.type"] = ex.GetType().FullName,
+            ["exception.message"] = ex.Message,
+            ["exception.stacktrace"] = ex.StackTrace
+        };
 
-    /// <summary>
-    /// Gets the total number of connections created.
-    /// </summary>
-    public long ConnectionsCreated => Interlocked.Read(ref _connectionsCreated);
+        return new ActivityEvent("exception", tags: tags);
+    }
 
-    /// <summary>
-    /// Gets the total number of connections disposed.
-    /// </summary>
-    public long ConnectionsDisposed => Interlocked.Read(ref _connectionsDisposed);
+    private void NotifyConnectionCreated(string connectionType)
+    {
+        PgClientTelemetry.ConnectionsCreated.Add(1,
+            new KeyValuePair<string, object?>("pgclient.connection.type", connectionType));
+
+        using var activity = PgClientTelemetry.ActivitySource.StartActivity("pgclient.connection.create", ActivityKind.Client);
+        activity?.SetTag("pgclient.connection.type", connectionType);
+    }
 
     /// <summary>
     /// Gets the current number of connections in the pool (regular + multiplexed).
@@ -87,9 +100,38 @@ public sealed class PgPool : IAsyncDisposable
 
     private PgPool(PgConnectOptions connectOptions, PgPoolOptions poolOptions, ILogger? logger)
     {
+        _poolId = Interlocked.Increment(ref s_poolIdCounter);
+
         _connectOptions = connectOptions;
         _poolOptions = poolOptions;
         _logger = logger ?? NullLogger.Instance;
+
+        var poolTags = new KeyValuePair<string, object?>[]
+        {
+            new("pgclient.pool.id", _poolId),
+            new("pgclient.pool.pipelined", _poolOptions.Pipelined)
+        };
+
+        _poolSizeGauge = PgClientTelemetry.Meter.CreateObservableGauge(
+            name: "pgclient.pool.size",
+            observeValue: () => new Measurement<int>(Size, poolTags),
+            unit: "{connection}",
+            description: "Current number of physical connections in the pool (regular + multiplexed)."
+        );
+
+        _poolAvailableGauge = PgClientTelemetry.Meter.CreateObservableGauge(
+            name: "pgclient.pool.available",
+            observeValue: () => new Measurement<int>(Available, poolTags),
+            unit: "{connection}",
+            description: "Current number of available connection slots in the pool."
+        );
+
+        _poolMultiplexedGauge = PgClientTelemetry.Meter.CreateObservableGauge(
+            name: "pgclient.pool.multiplexed.count",
+            observeValue: () => new Measurement<int>(MultiplexedConnectionCount, poolTags),
+            unit: "{connection}",
+            description: "Current number of multiplexed connections in the pool."
+        );
     }
 
     /// <summary>
@@ -119,18 +161,41 @@ public sealed class PgPool : IAsyncDisposable
     /// </summary>
     public async Task<RowSet> QueryAsync(string sql, CancellationToken cancellationToken = default)
     {
-        Interlocked.Increment(ref _totalQueriesExecuted);
+        PgClientTelemetry.QueriesExecuted.Add(1,
+            new KeyValuePair<string, object?>("db.system", "postgresql"),
+            new KeyValuePair<string, object?>("db.operation", "query"),
+            new KeyValuePair<string, object?>("pgclient.pool.pipelined", _poolOptions.Pipelined));
+
+        using var activity = PgClientTelemetry.ActivitySource.StartActivity("pgclient.query", ActivityKind.Client);
+        activity?.SetTag("db.system", "postgresql");
+        activity?.SetTag("db.operation", "query");
+        activity?.SetTag("pgclient.pool.pipelined", _poolOptions.Pipelined);
         
         if (_poolOptions.Pipelined)
         {
             var connection = await AcquireMultiplexedAsync(cancellationToken);
-            return await connection.QueryAsync(sql, cancellationToken);
+            try
+            {
+                return await connection.QueryAsync(sql, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                activity?.AddEvent(CreateExceptionEvent(ex));
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                throw;
+            }
         }
 
         var pooled = await AcquireAsync(cancellationToken);
         try
         {
             return await pooled.QueryAsync(sql, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            activity?.AddEvent(CreateExceptionEvent(ex));
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
         finally
         {
@@ -145,18 +210,41 @@ public sealed class PgPool : IAsyncDisposable
     /// </summary>
     public async Task<RowSet> PreparedQueryAsync(string sql, Tuple? parameters = null, CancellationToken cancellationToken = default)
     {
-        Interlocked.Increment(ref _totalQueriesExecuted);
+        PgClientTelemetry.QueriesExecuted.Add(1,
+            new KeyValuePair<string, object?>("db.system", "postgresql"),
+            new KeyValuePair<string, object?>("db.operation", "prepared_query"),
+            new KeyValuePair<string, object?>("pgclient.pool.pipelined", _poolOptions.Pipelined));
+
+        using var activity = PgClientTelemetry.ActivitySource.StartActivity("pgclient.prepared_query", ActivityKind.Client);
+        activity?.SetTag("db.system", "postgresql");
+        activity?.SetTag("db.operation", "prepared_query");
+        activity?.SetTag("pgclient.pool.pipelined", _poolOptions.Pipelined);
         
         if (_poolOptions.Pipelined)
         {
             var connection = await AcquireMultiplexedAsync(cancellationToken);
-            return await connection.PreparedQueryAsync(sql, parameters, cancellationToken);
+            try
+            {
+                return await connection.PreparedQueryAsync(sql, parameters, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                activity?.AddEvent(CreateExceptionEvent(ex));
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                throw;
+            }
         }
 
         var pooled = await AcquireAsync(cancellationToken);
         try
         {
             return await pooled.PreparedQueryAsync(sql, parameters, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            activity?.AddEvent(CreateExceptionEvent(ex));
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
         finally
         {
@@ -332,7 +420,7 @@ public sealed class PgPool : IAsyncDisposable
                     if (_multiplexedConnections.Count < _poolOptions.MaxSize)
                     {
                         var connection = await MultiplexedConnection.CreateAsync(_connectOptions, _logger, linkedToken);
-                        Interlocked.Increment(ref _connectionsCreated);
+                        NotifyConnectionCreated("multiplexed");
                         
                         connection.AvailableWorker = () =>
                         {
@@ -438,6 +526,8 @@ public sealed class PgPool : IAsyncDisposable
                     pooled.TryAcquire(); // Mark as in use
                     _connections.Add(pooled);
 
+                    NotifyConnectionCreated("dedicated");
+
                     if (_logger.IsEnabled(LogLevel.Debug))
                     {
                         _logger.LogDebug("Created new connection. Pool size: {Size}/{MaxSize}",
@@ -510,9 +600,13 @@ public sealed class PgPool : IAsyncDisposable
         }
     }
 
-    internal void NotifyConnectionDisposed()
+    internal void NotifyConnectionDisposed(string connectionType)
     {
-        Interlocked.Increment(ref _connectionsDisposed);
+        PgClientTelemetry.ConnectionsDisposed.Add(1,
+            new KeyValuePair<string, object?>("pgclient.connection.type", connectionType));
+
+        using var activity = PgClientTelemetry.ActivitySource.StartActivity("pgclient.connection.dispose", ActivityKind.Client);
+        activity?.SetTag("pgclient.connection.type", connectionType);
     }
 
     /// <summary>
@@ -560,7 +654,7 @@ public sealed class PgPool : IAsyncDisposable
             try
             {
                 await conn.DisposeAsync();
-                NotifyConnectionDisposed();
+                NotifyConnectionDisposed("multiplexed");
             }
             catch
             {
@@ -768,7 +862,7 @@ internal sealed class PooledConnection : IPooledConnection
         }
         finally
         {
-            _pool.NotifyConnectionDisposed();
+            _pool.NotifyConnectionDisposed("dedicated");
             _commandLock.Dispose();
         }
     }
