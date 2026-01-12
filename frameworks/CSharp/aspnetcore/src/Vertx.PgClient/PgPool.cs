@@ -28,6 +28,7 @@ public sealed class PgPool : IAsyncDisposable
     // Telemetry counters
     private long _totalQueriesExecuted;
     private long _connectionsCreated;
+    private long _connectionsDisposed;
 
     /// <summary>
     /// Gets the total number of queries executed.
@@ -509,6 +510,11 @@ public sealed class PgPool : IAsyncDisposable
         }
     }
 
+    internal void NotifyConnectionDisposed()
+    {
+        Interlocked.Increment(ref _connectionsDisposed);
+    }
+
     /// <summary>
     /// Closes all connections and disposes the pool.
     /// </summary>
@@ -554,6 +560,7 @@ public sealed class PgPool : IAsyncDisposable
             try
             {
                 await conn.DisposeAsync();
+                NotifyConnectionDisposed();
             }
             catch
             {
@@ -745,17 +752,24 @@ internal sealed class PooledConnection : IPooledConnection
 
         _disposed = true;
         _pool.RemoveConnection(this);
-        
+
         try
         {
-            await _socket.CloseAsync();
-        }
-        catch
-        {
-            // Ignore errors during cleanup
-        }
+            try
+            {
+                await _socket.CloseAsync();
+            }
+            catch
+            {
+                // Ignore errors during cleanup
+            }
 
-        await _socket.DisposeAsync();
-        _commandLock.Dispose();
+            await _socket.DisposeAsync();
+        }
+        finally
+        {
+            _pool.NotifyConnectionDisposed();
+            _commandLock.Dispose();
+        }
     }
 }

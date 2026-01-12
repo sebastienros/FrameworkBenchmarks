@@ -57,7 +57,7 @@ jobs:
     
 scenarios:
 
-# ASP.NET Core (Platform)
+# Platform
   
   fortunes_platform:
     db:
@@ -71,10 +71,8 @@ scenarios:
         path: /fortunes
         serverPort: 8080
 
-
-# ASP.NET Core (PgClient)
-
-  fortunes_minimal:
+  
+  fortunes_platform_pgclient:
     db:
       job: postgresql
     application:
@@ -86,27 +84,18 @@ scenarios:
         path: /fortunes
         serverPort: 8080
 
+# Minimal
 
-# ASP.NET Core Minimal (PgClient)
-  plaintext_minimal_pgclient:
+  fortunes_minimal:
+    db:
+      job: postgresql
     application:
-      job: minimal_pgclient
+      job: minimal
     load:
       job: wrk
       variables:
-        presetHeaders: plaintext
-        path: /plaintext
-        pipeline: 16
-        serverPort: 8080
-
-  json_minimal_pgclient:
-    application:
-      job: minimal_pgclient
-    load:
-      job: wrk
-      variables:
-        presetHeaders: json
-        path: /json
+        presetHeaders: html
+        path: /fortunes
         serverPort: 8080
 
   fortunes_minimal_pgclient:
