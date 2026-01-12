@@ -5,27 +5,45 @@ imports:
 
 jobs:
 
-  aspnetcore:
+  platform:
     source:
       repository: https://github.com/sebastienros/FrameworkBenchmarks.git
-      branchOrCommit: sebros/net10
+      branchOrCommit: master
       dockerFile: frameworks/CSharp/aspnetcore/aspnetcore.dockerfile
-      dockerImageName: aspnetcore
+      dockerImageName: plaatform
       dockerContextDirectory: frameworks/CSharp/aspnetcore/
     readyStateText: Application started
     arguments: --add-host="tfb-database:{{databaseServer}}"
-    noClean: true
 
-  pgclient:
+  platform_pgclient:
     source:
       repository: https://github.com/sebastienros/FrameworkBenchmarks.git
       branchOrCommit: sebros/pgclient
       dockerFile: frameworks/CSharp/aspnetcore/aspnetcore-pgclient.dockerfile
-      dockerImageName: pgclient
+      dockerImageName: platform_pgclient
       dockerContextDirectory: frameworks/CSharp/aspnetcore/
     readyStateText: Application started
     arguments: --add-host="tfb-database:{{databaseServer}}"
-    noClean: true
+
+  minimal:
+    source:
+      repository: https://github.com/sebastienros/FrameworkBenchmarks.git
+      branchOrCommit: master
+      dockerFile: frameworks/CSharp/aspnetcore/aspnetcore-minimal.dockerfile
+      dockerImageName: minimal
+      dockerContextDirectory: frameworks/CSharp/aspnetcore/
+    readyStateText: Application started
+    arguments: --add-host="tfb-database:{{databaseServer}}"
+
+  minimal_pgclient:
+    source:
+      repository: https://github.com/sebastienros/FrameworkBenchmarks.git
+      branchOrCommit: sebros/pgclient
+      dockerFile: frameworks/CSharp/aspnetcore/aspnetcore-minimal-pgclient.dockerfile
+      dockerImageName: minimal_pgclient
+      dockerContextDirectory: frameworks/CSharp/aspnetcore/
+    readyStateText: Application started
+    arguments: --add-host="tfb-database:{{databaseServer}}"
 
   postgresql:
     source:
@@ -40,32 +58,12 @@ jobs:
 scenarios:
 
 # ASP.NET Core (Platform)
-  plaintext_aspnetcore:
-    application:
-      job: aspnetcore
-    load:
-      job: wrk
-      variables:
-        presetHeaders: plaintext
-        path: /plaintext
-        pipeline: 16
-        serverPort: 8080
-
-  json_aspnetcore:
-    application:
-      job: aspnetcore
-    load:
-      job: wrk
-      variables:
-        presetHeaders: json
-        path: /json
-        serverPort: 8080
-
-  fortunes_aspnetcore:
+  
+  fortunes_platform:
     db:
       job: postgresql
     application:
-      job: aspnetcore
+      job: platform
     load:
       job: wrk
       variables:
@@ -75,9 +73,24 @@ scenarios:
 
 
 # ASP.NET Core (PgClient)
-  plaintext_pgclient:
+
+  fortunes_minimal:
+    db:
+      job: postgresql
     application:
-      job: pgclient
+      job: platform_pgclient
+    load:
+      job: wrk
+      variables:
+        presetHeaders: html
+        path: /fortunes
+        serverPort: 8080
+
+
+# ASP.NET Core Minimal (PgClient)
+  plaintext_minimal_pgclient:
+    application:
+      job: minimal_pgclient
     load:
       job: wrk
       variables:
@@ -86,9 +99,9 @@ scenarios:
         pipeline: 16
         serverPort: 8080
 
-  json_pgclient:
+  json_minimal_pgclient:
     application:
-      job: pgclient
+      job: minimal_pgclient
     load:
       job: wrk
       variables:
@@ -96,11 +109,11 @@ scenarios:
         path: /json
         serverPort: 8080
 
-  fortunes_pgclient:
+  fortunes_minimal_pgclient:
     db:
       job: postgresql
     application:
-      job: pgclient
+      job: minimal_pgclient
     load:
       job: wrk
       variables:

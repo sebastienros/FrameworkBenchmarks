@@ -1,7 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /app
 COPY src/Minimal .
-RUN dotnet publish Minimal.csproj -c Release -o out /p:DatabaseProvider=Npgsql
+COPY src/Vertx.PgClient /Vertx.PgClient
+RUN dotnet publish Minimal.csproj -c Release -o out /p:DatabaseProvider=PgClient
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 ENV URLS http://+:8080
@@ -11,7 +12,7 @@ ENV DOTNET_HillClimbing_Disable=1
 
 WORKDIR /app
 COPY --from=build /app/out ./
-COPY appsettings.postgresql.json ./appsettings.json
+COPY appsettings.pgclient.json ./appsettings.json
 
 EXPOSE 8080
 

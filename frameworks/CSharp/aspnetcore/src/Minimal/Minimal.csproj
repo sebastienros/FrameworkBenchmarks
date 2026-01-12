@@ -8,10 +8,19 @@
     <UserSecretsId>38063504-d08c-495a-89c9-daaad2f60f31</UserSecretsId>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <DefineConstants Condition=" '$(DatabaseProvider)' == 'Npgsql'">$(DefineConstants);NPGSQL</DefineConstants>
+    <DefineConstants Condition=" '$(DatabaseProvider)' == '' or '$(DatabaseProvider)' == 'PgClient' ">$(DefineConstants);PGCLIENT</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.0" />
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="RazorSlices" Version="0.9.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vertx.PgClient\Vertx.PgClient.csproj" />
   </ItemGroup>
 
 </Project>
