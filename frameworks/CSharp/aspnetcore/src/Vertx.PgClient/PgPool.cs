@@ -28,7 +28,6 @@ public sealed class PgPool : IAsyncDisposable
     // Telemetry counters
     private long _totalQueriesExecuted;
     private long _connectionsCreated;
-    private long _connectionsDisposed;
 
     /// <summary>
     /// Gets the total number of queries executed.
