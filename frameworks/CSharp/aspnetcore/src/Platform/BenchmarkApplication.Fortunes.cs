@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
@@ -11,40 +11,55 @@ namespace PlatformBenchmarks;
 
 public sealed partial class BenchmarkApplication
 {
-    private async Task FortunesRaw(PipeWriter pipeWriter)
+    // Pre-computed static header to avoid runtime string operations
+    private static ReadOnlySpan<byte> _fortunesPreamble =>
+        "HTTP/1.1 200 OK\r\n"u8 +
+        "Server: K\r\n"u8 +
+        "Content-Type: text/html; charset=utf-8\r\n"u8 +
+        "Transfer-Encoding: chunked\r\n"u8;
+
+    // Thread-local chunked writer to avoid pool overhead
+    [ThreadStatic]
+    private static ChunkedPipeWriter t_chunkedWriter;
+
+    private ValueTask FortunesRaw(PipeWriter pipeWriter)
     {
-        await OutputFortunes(
-            pipeWriter,
-            await RawDb.LoadFortunesRows(),
-            FortunesTemplateFactory);
+        var task = RawDb.LoadFortunesRows();
+
+        // Fast path: avoid async state machine when task is already complete
+        if (task.IsCompletedSuccessfully)
+        {
+            return OutputFortunes(pipeWriter, task.Result, FortunesTemplateFactory);
+        }
+
+        return FortunesRawSlowAsync(pipeWriter, task);
+    }
+
+    private async ValueTask FortunesRawSlowAsync(PipeWriter pipeWriter, Task<System.Collections.Generic.List<FortuneUtf8>> task)
+    {
+        await OutputFortunes(pipeWriter, await task, FortunesTemplateFactory);
     }
 
     private ValueTask OutputFortunes<TModel>(PipeWriter pipeWriter, TModel model, Func<TModel, RazorSlice<TModel>> templateFactory)
     {
-        // Render headers
-        var preamble = """
-            HTTP/1.1 200 OK
-            Server: K
-            Content-Type: text/html; charset=utf-8
-            Transfer-Encoding: chunked
-            """u8;
-        var headersLength = preamble.Length + DateHeader.HeaderBytes.Length;
+        // Write headers with single span acquisition
+        var headersLength = _fortunesPreamble.Length + DateHeader.HeaderBytes.Length;
         var headersSpan = pipeWriter.GetSpan(headersLength);
-        preamble.CopyTo(headersSpan);
-        DateHeader.HeaderBytes.CopyTo(headersSpan[preamble.Length..]);
+        _fortunesPreamble.CopyTo(headersSpan);
+        DateHeader.HeaderBytes.CopyTo(headersSpan[_fortunesPreamble.Length..]);
         pipeWriter.Advance(headersLength);
 
-        // Render body
+        // Use thread-local writer instead of pool to reduce overhead
+        var chunkedWriter = t_chunkedWriter ??= new ChunkedPipeWriter();
+        chunkedWriter.SetOutput(pipeWriter, chunkSizeHint: 2048);
+
         var template = templateFactory(model);
-        // Kestrel PipeWriter span size is 4K, headers above already written to first span & template output is ~1350 bytes,
-        // so 2K chunk size should result in only a single span and chunk being used.
-        var chunkedWriter = GetChunkedWriter(pipeWriter, chunkSizeHint: 2048);
         var renderTask = template.RenderAsync(chunkedWriter, HtmlEncoder);
 
         if (renderTask.IsCompletedSuccessfully)
         {
             renderTask.GetAwaiter().GetResult();
-            EndTemplateRendering(chunkedWriter, template);
+            EndTemplateRenderingInline(chunkedWriter, template);
             return ValueTask.CompletedTask;
         }
 
@@ -54,14 +69,14 @@ public sealed partial class BenchmarkApplication
     private static async ValueTask AwaitTemplateRenderTask(ValueTask renderTask, ChunkedPipeWriter chunkedWriter, RazorSlice template)
     {
         await renderTask;
-        EndTemplateRendering(chunkedWriter, template);
+        EndTemplateRenderingInline(chunkedWriter, template);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void EndTemplateRendering(ChunkedPipeWriter chunkedWriter, RazorSlice template)
+    private static void EndTemplateRenderingInline(ChunkedPipeWriter chunkedWriter, RazorSlice template)
     {
         chunkedWriter.Complete();
-        ReturnChunkedWriter(chunkedWriter);
+        // Note: No need to return to pool since we use thread-local
         template.Dispose();
     }
 }
